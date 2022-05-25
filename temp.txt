@@ -1,0 +1,212 @@
+#include <SoftwareSerial.h>
+
+#define SERVER_HOST "ibb.jjrobots.com"
+#define SERVER_URL "http://ibb.jjrobots.com/ibbsvr/ibb.php"
+
+#define WIFICONFIG_MAXLEN 30
+
+//EEPROM object to store Wifi configuration
+struct WifiConfigS{
+  uint8_t status;
+  char ssid[WIFICONFIG_MAXLEN];
+  char pass[WIFICONFIG_MAXLEN];
+  char proxy[WIFICONFIG_MAXLEN];
+  unsigned int port;
+};
+
+WifiConfigS WifiConfig;
+
+char MAC[13];  // MAC address of Wifi module
+
+void readWifiConfig(void);
+void writeWifiConfig(uint8_t status, char ssid[30], char pass[30], char proxy[30], unsigned int port);
+void WifiConfigurationMode(void);
+void GetMac(void);
+bool WifiConnect(void);
+void ESPwait(int timeout_secs);
+void ESPflush(void);
+uint8_t ESPwaitFor(const char *stopstr, int timeout_secs);
+uint8_t ESPwaitFor2(const char *stopstr, const char *stopstr2, int timeout_secs);
+uint8_t ESPgetMac(char *MAC);
+uint8_t ESPwaitforMessage(uint8_t timeout_secs);
+uint8_t ESPsendHTTP(char *url);
+uint8_t ESPwebServerExtractParam(char *param, char ch);
+void ESPwebServerConfig(void);
+void urldecode2(char *dst, const char *src);
+void ESPconfigWeb(uint8_t tcp_ch);
+void ESPconfigWeb_advanced(uint8_t tcp_ch);
+void ESPconfigWebOK(uint8_t tcp_ch);
+
+
+###########
+
+  stepper1.rotate(360);
+    stepper2.rotate(360);
+
+    /*
+     * Moving motor to original position using steps
+     */
+    
+    
+    stepper1.move(-MOTOR_STEPS*MICROSTEPS);
+    stepper2.move(-MOTOR_STEPS*MICROSTEPS);
+
+    // pause and allow the motor to be moved by hand
+    stepper1.disable();
+    stepper2.disable();
+
+#############
+
+
+
+
+
+
+
+
+
+
+
+readWifiConfig();
+
+  DebugSerial.println(WifiConfig.status);
+  DebugSerial.println(WifiConfig.ssid);
+  //Serial.println(WifiConfig.pass);
+  DebugSerial.println("****");
+  DebugSerial.println(WifiConfig.proxy);
+  DebugSerial.println(WifiConfig.port);
+
+  // if wifi parameters are not configured we start the config web server
+  if (WifiConfig.status != 1) {
+    WifiConfigurationMode();
+  }
+
+  Wconnected = false;
+  Network_errors = 0;
+  while (!Wconnected) {
+    // Wifi initialization
+    Serial.println();
+    ESPflush();
+    Serial.println(F("AT+RST"));
+    ESPwaitFor("ready", 10);
+    Serial.println(F("AT+GMR"));
+    ESPwaitFor("OK", 5);
+    GetMac();
+
+    if (WifiConnect()) {
+      digitalWrite(13, HIGH);
+      Wconnected = true;
+    }
+    else {
+      DebugSerial.println(F("Error connecting to network!"));
+      digitalWrite(13, LOW);
+      delay(2500);
+      Wconnected = false;
+      Network_errors++;
+      // If connection fail 2 times we enter WifiConfigurationMode
+      if (Network_errors >= 2) {
+        WifiConfigurationMode();
+        Network_errors = 0;
+      }
+    }
+  }
+
+  // Configure TCP client (for HTTP connection to server)
+  delay(250);
+  Serial.println(F("AT+CIFSR"));
+  ESPwaitFor("OK", 3);
+  Serial.println(F("AT+CIPMUX=0"));
+  ESPwaitFor("OK", 3);
+  Serial.println(F("AT+CIPMODE=0"));
+  ESPwaitFor("OK", 3);
+  Network_errors = 0;
+  delay(200);
+
+  //Initializing init position
+  position_x = ROBOT_INITIAL_POSITION_X * X_AXIS_STEPS_PER_UNIT;
+  position_y = ROBOT_INITIAL_POSITION_Y * Y_AXIS_STEPS_PER_UNIT;
+
+  // Output parameters
+  //DebugSerial.print(F("Max_acceleration_x: "));
+  //DebugSerial.println(acceleration_x);
+  //DebugSerial.print(F("Max_acceleration_y: "));
+  //DebugSerial.println(acceleration_y);
+  //DebugSerial.print(F("Max speed X: "));
+  //DebugSerial.println(MAX_SPEED_X);
+  //DebugSerial.print(F("Max speed Y: "));
+  //DebugSerial.println(MAX_SPEED_Y);
+
+  DebugSerial.print(F("Free RAM: "));
+  DebugSerial.println(freeRam());
+
+    // STEPPER MOTORS INITIALIZATION
+  DebugSerial.println(F("Steper motors initialization..."));
+  initSteppers();
+
+  delay(200);
+  //Serial.println("Moving to initial position...");
+  // Initializing Robot command variables
+  com_speed_x = MAX_SPEED_X / 2;
+  com_speed_y = MAX_SPEED_Y / 2;
+  max_speed_x = com_speed_x;
+  max_speed_y = com_speed_y;
+
+  //Initializing init position
+  position_x = ROBOT_INITIAL_POSITION_X * X_AXIS_STEPS_PER_UNIT;
+  position_y = ROBOT_INITIAL_POSITION_Y * Y_AXIS_STEPS_PER_UNIT;
+  //last_position_x = position_x;
+  //last_position_y = position_y;
+
+  //setSpeedS(com_speed_x, com_speed_y);
+  //setPosition_mm10(ROBOT_MIN_X * 10, ROBOT_MIN_Y * 10);
+  last_move_x = ROBOT_INITIAL_POSITION_X * 10;
+  last_move_y = ROBOT_INITIAL_POSITION_Y * 10;
+  home_position = true;
+  delay(50);
+
+  ESPflush();
+
+  DebugSerial.println(F("Wifi parameters:"));
+  DebugSerial.print(F("Host:"));
+  DebugSerial.println(SERVER_HOST);
+  DebugSerial.print(F("Url:"));
+  DebugSerial.println(SERVER_URL);
+  if ((WifiConfig.port > 0) && (WifiConfig.port < 65000) && (strlen(WifiConfig.proxy) > 0))
+  {
+    DebugSerial.println(F("proxy : "));
+    DebugSerial.println(WifiConfig.proxy);
+    DebugSerial.println(F("port : "));
+    DebugSerial.println(WifiConfig.port);
+  }
+  DebugSerial.println();
+  DebugSerial.println(VERSION);
+  //Serial.print("ID_IWBB ");
+  DebugSerial.println(MAC);
+  DebugSerial.println(" Ready...");
+  timer_old = micros();
+  timeout_counter = 0;
+  block_number = -1;
+  commands_index = 0;
+  commands_lines = 0;
+  draw_task = false;
+
+  // Ready signal
+  /*enableServo1();
+  enableServo2();
+  moveServo2(SERVO2_PAINT - 200);
+  delay(300);
+  moveServo2(SERVO2_PAINT);
+  delay(300);
+  moveServo2(SERVO2_PAINT - 200);
+  delay(300);
+  moveServo2(SERVO2_PAINT);
+  delay(1000);
+  if (Wconnected) {
+    moveServo2(SERVO2_PAINT - 200);
+    delay(300);
+    moveServo2(SERVO2_PAINT);
+    delay(300);
+  }
+
+  disableServo1();
+  disableServo2();*/
